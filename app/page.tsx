@@ -331,7 +331,7 @@ export default function StageDiaryApp() {
             </div>
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-2 text-xs">
               <div className="flex justify-between"><span className="text-slate-500">좌석 정보</span><span className="font-bold">{detailTicket.seat}</span></div>
-              <div className="flex justify-between"><span class="text-slate-500">시야 만족도</span><span className="text-amber-500 font-bold">{detailTicket.seatRating}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">시야 만족도</span><span className="text-amber-500 font-bold">{detailTicket.seatRating}</span></div>
               {detailTicket.seatMemo && <div className="flex justify-between"><span className="text-slate-500">시야 메모</span><span className="italic">"{detailTicket.seatMemo}"</span></div>}
               <div className="flex justify-between"><span className="text-slate-500">캐스팅 배우</span><span className="font-bold">{detailTicket.casting?.join(', ')}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">관람 금액</span><span className="font-bold">{formatNumber(detailTicket.price)}원</span></div>
