@@ -1,3 +1,4 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css");
 @import "tailwindcss";
 
 :root {
@@ -22,8 +23,12 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Pretendard', sans-serif;
 }
+
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; }
 
 button { cursor: pointer; }
 button:disabled { opacity: .5; cursor: wait; }
@@ -34,3 +39,29 @@ button:disabled { opacity: .5; cursor: wait; }
 [data-theme="light"] .text-slate-400 { color: #64748b; }
 [data-theme="light"] .text-purple-300, [data-theme="light"] .text-purple-400 { color: #9333ea; }
 nav { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
+[data-theme="light"] .bg-slate-950 { background-color: #f8fafc; }
+[data-theme="light"] .bg-rose-500\/20 { background-color: #f3e8ff; }
+[data-theme="light"] .text-rose-300 { color: #7e22ce; }
+[data-theme="light"] .bg-purple-950\/40 { background-color: #f3e8ff; }
+
+/* Keep the app inside the visible viewport; only the middle panel scrolls. */
+.diary-screen { min-height: 100dvh; width: 100%; }
+.diary-shell { height: min(850px, calc(100dvh - 32px)); min-height: 0; flex-shrink: 0; }
+.diary-nav { position: relative; padding-bottom: calc(.75rem + env(safe-area-inset-bottom, 0px)); }
+.diary-shell > header, .diary-shell > nav { flex-shrink: 0; }
+.diary-shell > main, .diary-shell > .overflow-y-auto { overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+.diary-shell select {
+  appearance: none; -webkit-appearance: none; min-width: 0;
+  padding-right: 2rem !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%2394a3b8' stroke-width='1.8' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.diary-shell input, .diary-shell textarea, .diary-shell select { max-width: 100%; }
+.diary-shell button:focus-visible, .diary-shell [contenteditable]:focus-visible { outline: 2px solid #c084fc; outline-offset: 2px; }
+[data-theme="light"] .divide-slate-700 > :not(:last-child) { border-color: #e2e8f0; }
+@media (max-width: 639px) {
+  html, body { height: 100%; overflow: hidden; }
+  .diary-screen { position: fixed; inset: 0; bottom: auto; top: var(--diary-viewport-top, 0px); height: var(--diary-viewport-height, 100dvh); min-height: 0; padding: 0; }
+  .diary-shell { height: 100%; max-height: 100%; width: 100%; }
+  .diary-shell input, .diary-shell select, .diary-shell textarea { font-size: 16px; }
+}
