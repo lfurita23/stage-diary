@@ -243,15 +243,6 @@ export default function StageDiaryApp() {
 
 
   // 인증 처리
-  const socialLogin = async (provider: 'google' | 'kakao') => {
-    if (busy.current) return;
-    busy.current = true; setWorking(true); setLoadError('');
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.href.split('#')[0] } });
-      if (error) throw error;
-    } catch { setLoadError('소셜 로그인에 연결하지 못했습니다. 잠시 후 다시 시도하거나 이메일로 로그인해주세요.'); }
-    finally { busy.current = false; setWorking(false); }
-  };
   const downloadCalendar = (ticket: any) => {
     const event = parseSharedEvent(JSON.stringify({ title: ticket.title, theater: ticket.theater, date: ticket.date, timeHour: ticket.timeHour || '19', timeMin: ticket.timeMin || '30' }));
     if (!event) { setShareNotice('일정 정보를 확인해주세요.'); return; }
@@ -416,10 +407,6 @@ export default function StageDiaryApp() {
           </div>
           <div className="space-y-4">
             {renderSharedEvent()}
-            <div className="grid grid-cols-2 gap-2">
-              <button disabled={working} onClick={() => socialLogin('google')} className="border border-slate-400 rounded-xl py-3 text-sm">구글로 계속</button>
-              <button disabled={working} onClick={() => socialLogin('kakao')} className="border border-slate-400 rounded-xl py-3 text-sm">카카오로 계속</button>
-            </div>
             {loadError && <p role="alert" className="text-xs text-rose-400">{loadError}</p>}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">이메일 계정</label>
