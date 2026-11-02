@@ -98,18 +98,23 @@ export default function StageDiaryApp() {
   // iOS browser chrome and keyboard can resize the visual viewport separately.
   useEffect(() => {
     const viewport = window.visualViewport;
-    if (!viewport) return;
     const syncViewport = () => {
-      if (viewport.scale !== 1) return;
-      document.documentElement.style.setProperty('--diary-viewport-height', `${viewport.height}px`);
-      document.documentElement.style.setProperty('--diary-viewport-top', `${viewport.offsetTop}px`);
+      if (viewport && Math.abs(viewport.scale - 1) > .01) return;
+      const height = viewport?.height ?? window.innerHeight;
+      if (!(height > 0)) return;
+      document.documentElement.style.setProperty('--diary-viewport-height', `${height}px`);
+      document.documentElement.style.setProperty('--diary-viewport-top', `${Math.max(0, viewport?.offsetTop ?? 0)}px`);
     };
     syncViewport();
-    viewport.addEventListener('resize', syncViewport);
-    viewport.addEventListener('scroll', syncViewport);
+    viewport?.addEventListener('resize', syncViewport);
+    viewport?.addEventListener('scroll', syncViewport);
+    window.addEventListener('resize', syncViewport);
+    window.addEventListener('pageshow', syncViewport);
     return () => {
-      viewport.removeEventListener('resize', syncViewport);
-      viewport.removeEventListener('scroll', syncViewport);
+      viewport?.removeEventListener('resize', syncViewport);
+      viewport?.removeEventListener('scroll', syncViewport);
+      window.removeEventListener('resize', syncViewport);
+      window.removeEventListener('pageshow', syncViewport);
       document.documentElement.style.removeProperty('--diary-viewport-height');
       document.documentElement.style.removeProperty('--diary-viewport-top');
     };

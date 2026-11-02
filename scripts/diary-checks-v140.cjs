@@ -52,11 +52,11 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   const context = {
     exports: module.exports, module,
     require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
-    window: { location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
+    window: { innerHeight: 760, addEventListener() {}, removeEventListener() {}, location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
     localStorage: { getItem(key) { return storage.get(key) ?? null; }, setItem(key,value) { storage.set(key,value); } },
     URL: class extends URL { static createObjectURL() { return 'blob:test'; } static revokeObjectURL() {} },
     Image: class { naturalWidth = 2400; naturalHeight = 3600; async decode() {} },
-    document: { getElementById: id => fields[id] || { value: '' }, createElement() { return { width: 0, height: 0, getContext() { return {fillRect() {}, drawImage() {}}; }, toDataURL() { return 'data:image/jpeg;base64,compressed-test-image'; } }; } },
+    document: { documentElement: { style: { setProperty() {}, removeProperty() {} } }, getElementById: id => fields[id] || { value: '' }, createElement() { return { width: 0, height: 0, getContext() { return {fillRect() {}, drawImage() {}}; }, toDataURL() { return 'data:image/jpeg;base64,compressed-test-image'; } }; } },
     confirm: () => true, alert() {}, console,
   };
   vm.runInNewContext(source, context);

@@ -44,12 +44,44 @@ nav { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
 [data-theme="light"] .text-rose-300 { color: #7e22ce; }
 [data-theme="light"] .bg-purple-950\/40 { background-color: #f3e8ff; }
 
-/* Keep the app inside the visible viewport; only the middle panel scrolls. */
-.diary-screen { min-height: 100dvh; width: 100%; }
-.diary-shell { height: min(850px, calc(100dvh - 32px)); min-height: 0; flex-shrink: 0; isolation: isolate; }
+/* Lock the document at every breakpoint, including landscape and desktop-site mode.
+   The app follows the visible viewport; only its content panel may scroll. */
+html, body { width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; }
+.diary-screen {
+  position: fixed;
+  top: var(--diary-viewport-top, 0px);
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100svh;
+  height: var(--diary-viewport-height, 100dvh);
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.diary-shell {
+  display: flex;
+  flex-direction: column;
+  height: min(850px, 100%);
+  max-height: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex-shrink: 0;
+  isolation: isolate;
+  overflow: hidden;
+}
 .diary-nav { position: relative; padding-bottom: calc(.75rem + env(safe-area-inset-bottom, 0px)); }
 .diary-shell > header, .diary-shell > nav { flex-shrink: 0; }
-.diary-shell > main, .diary-shell > .overflow-y-auto { overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+.diary-shell > main, .diary-shell > .overflow-y-auto {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
 .diary-shell select {
   appearance: none; -webkit-appearance: none; min-width: 0;
   padding-right: 2rem !important;
@@ -71,8 +103,11 @@ nav { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
 .diary-shell:has(input[type="email"]) { overflow-y: auto; justify-content: flex-start; }
 .diary-shell > header { padding-top: max(1rem, env(safe-area-inset-top, 0px)); }
 @media (max-width: 639px) {
-  html, body { height: 100%; overflow: hidden; }
-  .diary-screen { position: fixed; inset: 0; bottom: auto; top: var(--diary-viewport-top, 0px); height: var(--diary-viewport-height, 100dvh); min-height: 0; padding: 0; }
+  .diary-screen { padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
   .diary-shell { height: 100%; max-height: 100%; width: 100%; }
   .diary-shell input, .diary-shell select, .diary-shell textarea { font-size: 16px; }
+}
+@media (max-height: 500px) {
+  .diary-shell > header { padding-top: max(.5rem, env(safe-area-inset-top, 0px)); padding-bottom: .5rem; }
+  .diary-nav { padding-top: .375rem; padding-bottom: calc(.375rem + env(safe-area-inset-bottom, 0px)); }
 }

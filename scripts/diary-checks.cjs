@@ -46,9 +46,9 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   const context = {
     exports: module.exports, module,
     require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
-    URL, window: { location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
+    URL, window: { innerHeight: 760, addEventListener() {}, removeEventListener() {}, location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
     localStorage: { getItem() { return null; }, setItem() {} },
-    document: { getElementById: id => fields[id] || { value: '' } },
+    document: { documentElement: { style: { setProperty() {}, removeProperty() {} } }, getElementById: id => fields[id] || { value: '' } },
     confirm: () => true, alert() {}, console,
   };
   vm.runInNewContext(source, context);
