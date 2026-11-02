@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { calendarFile, parseSharedEvent, type SharedEvent } from '@/lib/calendar';
 
 // 공연장별 가까운 지하철역 매핑
 const theaterStations: { [key: string]: string } = {
@@ -21,6 +22,8 @@ export default function StageDiaryApp() {
   const [actionError, setActionError] = useState('');
   const [systemLight, setSystemLight] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [nicknameDraft, setNicknameDraft] = useState<{ owner: string; value: string } | null>(null);
+  const [nicknameNotice, setNicknameNotice] = useState<{ owner: string; text: string } | null>(null);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -36,10 +39,22 @@ export default function StageDiaryApp() {
   const imageRequest = useRef(0);
   const posterInput = useRef<HTMLInputElement>(null);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [sharedEvent, setSharedEvent] = useState<SharedEvent | null>(null);
+  const [shareNotice, setShareNotice] = useState('');
+  const [shareLink, setShareLink] = useState('');
+
+  useEffect(() => {
+    const raw = new URL(window.location.href).searchParams.get('event');
+    if (raw) {
+      const event = parseSharedEvent(raw);
+      setSharedEvent(event);
+      if (!event) setShareNotice('공유된 일정이 올바르지 않습니다. 다시 공유해 달라고 요청해주세요.');
+    }
+  }, []);
   
   const [calendarYear, setCalendarYear] = useState(2026);
   const [calendarMonth, setCalendarMonth] = useState(1);
-  const [selectedActorFilter, setSelectedActorFilter] = useState('');
+  const [selectedActorFilters, setSelectedActorFilters] = useState<string[]>([]);
   const [snsConnected, setSnsConnected] = useState({ instagram: true, twitter: false });
 
   const [tickets, setTickets] = useState<any[]>([]);
@@ -121,8 +136,9 @@ export default function StageDiaryApp() {
   const getCasting = () => parseCasting((document.getElementById('fCasting') as HTMLInputElement | null)?.value ?? viewMode.casting?.join(', ') ?? '');
   const allActors = Array.from(new Set([...actorsList, ...Object.values(favorites), ...tickets.flatMap(t => t.casting || [])])).filter(Boolean);
   const stationFor = (theater: string) => tickets.find(t => t.theater === theater.trim() && t.station)?.station || theaterStations[theater.trim()] || '';
+  const filteredTickets = tickets.filter(ticket => selectedActorFilters.every(actor => ticket.casting?.includes(actor)));
 
-  const acceptPoster = async (file: File) => {
+  const acceptPoster = async (file: File, field = 'poster') => {
     const request = ++imageRequest.current;
     setActionError(''); setImageLoading(true);
     let objectUrl = '';
@@ -148,7 +164,7 @@ export default function StageDiaryApp() {
         scale *= .75;
       }
       if (!result.startsWith('data:image/jpeg') || result.length > 400000) throw new Error('이미지가 너무 큽니다. 다른 사진을 선택해주세요.');
-      if (request === imageRequest.current) setViewMode((prev: any) => typeof prev === 'object' ? { ...prev, poster: result } : prev);
+      if (request === imageRequest.current) setViewMode((prev: any) => typeof prev === 'object' ? { ...prev, [field]: result } : prev);
     } catch (error) { if (request === imageRequest.current) setActionError(error instanceof Error ? error.message : '이미지를 읽지 못했습니다. JPG 또는 PNG로 변환 후 다시 선택해주세요.'); }
     finally { if (objectUrl) URL.revokeObjectURL(objectUrl); if (request === imageRequest.current) setImageLoading(false); }
   };
@@ -168,7 +184,7 @@ export default function StageDiaryApp() {
   const fromRow = (row: any) => ({ ...row, seatRating: row.seat_rating ?? '', seatMemo: row.seat_memo ?? '', timeHour: row.time_hour ?? '19', timeMin: row.time_min ?? '30', sectionTitle: row.section_title ?? '', casting: row.casting ?? [], keywords: row.keywords ?? [] });
   useEffect(() => {
     let active = true;
-    setTickets([]); setDetailTicket(null); setViewMode('main'); setActionError(''); imageRequest.current++; setImageLoading(false);
+    setTickets([]); setSelectedActorFilters([]); setDetailTicket(null); setViewMode('main'); setActionError(''); imageRequest.current++; setImageLoading(false);
     if (!currentUser || currentUser.id === 'demo-user') { setWorking(false); return; }
     setLoadError('');
     setWorking(true);
@@ -197,8 +213,72 @@ export default function StageDiaryApp() {
     return error && typeof error === 'object' && 'message' in error ? String(error.message) : '네트워크 연결을 확인한 후 다시 시도해주세요.';
   }
 
+  const savedNickname = currentUser?.user_metadata?.nickname;
+  const displayName = (typeof savedNickname === 'string' && savedNickname.trim()) || currentUser?.email?.split('@')[0] || '관객';
+  const editingNickname = nicknameDraft?.owner === currentUser?.id && nicknameDraft !== null;
+  const saveNickname = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!currentUser || !nicknameDraft || nicknameDraft.owner !== currentUser.id || busy.current) return;
+    const owner = currentUser.id;
+    const nickname = nicknameDraft.value.trim();
+    if (!nickname || Array.from(nickname).length > 20 || /[\u0000-\u001f\u007f]/.test(nickname)) {
+      setNicknameNotice({ owner, text: '닉네임은 1~20자로 입력해주세요.' }); return;
+    }
+    busy.current = true; setWorking(true); setNicknameNotice(null);
+    try {
+      if (owner === 'demo-user') {
+        setCurrentUser((prev: any) => prev?.id === owner ? { ...prev, user_metadata: { ...prev.user_metadata, nickname } } : prev);
+      } else {
+        const { data, error } = await supabase.auth.updateUser({ data: { nickname } });
+        if (error) throw error;
+        if (!data.user || data.user.id !== owner) throw new Error('로그인 상태를 확인한 후 다시 시도해주세요.');
+        setCurrentUser((prev: any) => prev?.id === owner ? data.user : prev);
+      }
+      setNicknameDraft(prev => prev?.owner === owner ? null : prev);
+      setNicknameNotice({ owner, text: owner === 'demo-user' ? '닉네임을 변경했습니다. 체험 모드에서는 이 화면에서만 유지됩니다.' : '닉네임을 저장했습니다.' });
+    } catch (error) {
+      setNicknameNotice({ owner, text: '닉네임을 저장하지 못했습니다: ' + errorMessage(error) });
+    } finally { busy.current = false; setWorking(false); }
+  };
+
 
   // 인증 처리
+  const socialLogin = async (provider: 'google' | 'kakao') => {
+    if (busy.current) return;
+    busy.current = true; setWorking(true); setLoadError('');
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.href.split('#')[0] } });
+      if (error) throw error;
+    } catch { setLoadError('소셜 로그인에 연결하지 못했습니다. 잠시 후 다시 시도하거나 이메일로 로그인해주세요.'); }
+    finally { busy.current = false; setWorking(false); }
+  };
+  const downloadCalendar = (ticket: any) => {
+    const event = parseSharedEvent(JSON.stringify({ title: ticket.title, theater: ticket.theater, date: ticket.date, timeHour: ticket.timeHour || '19', timeMin: ticket.timeMin || '30' }));
+    if (!event) { setShareNotice('일정 정보를 확인해주세요.'); return; }
+    const url = URL.createObjectURL(new Blob([calendarFile(event)], { type: 'text/calendar;charset=utf-8' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'stage-diary.ics'; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    setShareNotice('캘린더 파일을 열고 저장해주세요. 알림은 캘린더 앱에서 확인할 수 있습니다.');
+  };
+  const shareEvent = async (ticket: any) => {
+    const event = { title: ticket.title, theater: ticket.theater, date: ticket.date, timeHour: ticket.timeHour || '19', timeMin: ticket.timeMin || '30' };
+    const url = new URL(window.location.origin); url.searchParams.set('event', JSON.stringify(event));
+    setShareLink(url.href); setShareNotice('공연명·날짜·시간·공연장만 공유됩니다. 상대방도 링크를 열어 캘린더에 등록해주세요.');
+    try {
+      if (navigator.share) await navigator.share({ title: `${ticket.title} 함께 보기`, url: url.href });
+      else { await navigator.clipboard.writeText(url.href); setShareNotice('일정 링크를 복사했습니다. 상대방에게 보내주세요.'); }
+    } catch (error) { if (!(error instanceof Error && error.name === 'AbortError')) setShareNotice('아래 일정 링크를 복사해서 보내주세요.'); }
+  };
+  const renderSharedEvent = () => <>
+    {sharedEvent && <section className="m-4 p-4 rounded-2xl border border-purple-400 space-y-3">
+      <h2 className="font-bold">함께 보는 공연 초대</h2>
+      <p className="text-sm">{sharedEvent.title} · {sharedEvent.date} {sharedEvent.timeHour}:{sharedEvent.timeMin} · {sharedEvent.theater}</p>
+      <button className="bg-purple-600 text-white rounded-xl p-3 text-sm" onClick={() => downloadCalendar(sharedEvent)}>내 캘린더에 등록</button>
+      {currentUser && <button disabled={working || imageLoading} className="block text-purple-400 text-sm" onClick={() => { openFullPageNew(sharedEvent.date); setViewMode((prev: any) => ({ ...prev, ...sharedEvent })); setSharedEvent(null); }}>내 티켓북에도 추가</button>}
+      <p className="text-xs text-slate-400">한국 시간 기준입니다. 각자 캘린더에서 저장을 완료해주세요.</p>
+    </section>}
+    {shareNotice && <p role="status" className="px-4 py-2 text-sm text-purple-400">{shareNotice}</p>}
+  </>;
   const handleAuthSubmit = async () => {
     if (busy.current) return;
     if (!authEmail || !authPassword) {
@@ -259,6 +339,8 @@ export default function StageDiaryApp() {
     const memo = (document.getElementById('fMemo') as HTMLInputElement)?.value;
     const sectionTitle = (document.getElementById('fSectionTitle') as HTMLInputElement)?.value;
     const review = (document.getElementById('fReview') as HTMLTextAreaElement)?.value;
+    const phoneSuffix = (document.getElementById('fPhoneSuffix') as HTMLInputElement)?.value.trim() || '';
+    if (phoneSuffix && !/^\d{4}$/.test(phoneSuffix)) { setActionError('전화번호 뒷자리는 숫자 4자리로 입력해주세요.'); return; }
 
     if (!title || !date || !theater) {
       setActionError('필수 항목(제목, 일자, 공연장)을 입력해주세요.');
@@ -267,7 +349,7 @@ export default function StageDiaryApp() {
     if (price !== null && (!Number.isFinite(price) || price < 0)) { setActionError('관람 금액은 0 이상의 숫자로 입력해주세요.'); return; }
 
     const ticket = { title, theater, station, seat, seatRating, seatMemo, date, timeHour, timeMin,
-      poster: viewMode.poster || '',
+      poster: viewMode.poster || '', phone_suffix: phoneSuffix, transfer_image: viewMode.transfer_image || '', casting_image: viewMode.casting_image || '',
       casting: getCasting(), price, discount, memo, sectionTitle, review, keywords: viewMode.keywords || [] };
     if (currentUser?.id === 'demo-user') {
       setTickets(prev => id === null ? [{ ...ticket, id: Date.now() }, ...prev] : prev.map(t => t.id === id ? { ...t, ...ticket } : t));
@@ -277,13 +359,18 @@ export default function StageDiaryApp() {
     const row = { user_id: currentUser.id, title, theater, station, seat, seat_rating: seatRating, seat_memo: seatMemo, date, time_hour: timeHour, time_min: timeMin, poster: ticket.poster, casting: ticket.casting, price, discount, memo, section_title: sectionTitle, review, keywords: ticket.keywords };
     busy.current = true; setWorking(true);
     try {
-      const query = id === null ? supabase.from('tickets').insert(row) : supabase.from('tickets').update(row).eq('id', id).eq('user_id', currentUser.id);
+      const hasTransferFields = phoneSuffix || ticket.transfer_image || 'phone_suffix' in viewMode || 'transfer_image' in viewMode;
+      const payload = { ...row, ...(hasTransferFields ? { phone_suffix: phoneSuffix, transfer_image: ticket.transfer_image } : {}), ...(ticket.casting_image || 'casting_image' in viewMode ? { casting_image: ticket.casting_image } : {}) };
+      const query = id === null ? supabase.from('tickets').insert(payload) : supabase.from('tickets').update(payload).eq('id', id).eq('user_id', currentUser.id);
       const { data, error } = await query.select().single();
       if (error) throw error;
       const saved = fromRow(data);
       setTickets(prev => (id === null ? [saved, ...prev] : prev.map(t => t.id === id ? saved : t)).sort((a,b) => b.date.localeCompare(a.date)));
       setViewMode('main');
-    } catch (error: unknown) { setActionError('저장하지 못했습니다: ' + errorMessage(error)); }
+    } catch (error: unknown) {
+      const message = errorMessage(error);
+      setActionError(/phone_suffix|transfer_image|casting_image/.test(message) ? '사진·수령 정보 저장을 위한 저장소 설정이 필요합니다. 설정 후 다시 저장해주세요. 입력 내용은 유지됩니다.' : '저장하지 못했습니다: ' + message);
+    }
     finally { busy.current = false; setWorking(false); }
   };
 
@@ -328,6 +415,11 @@ export default function StageDiaryApp() {
             <p className="text-xs text-slate-400">클라우드로 동기화되는 나만의 뮤지컬 아카이브</p>
           </div>
           <div className="space-y-4">
+            {renderSharedEvent()}
+            <div className="grid grid-cols-2 gap-2">
+              <button disabled={working} onClick={() => socialLogin('google')} className="border border-slate-400 rounded-xl py-3 text-sm">구글로 계속</button>
+              <button disabled={working} onClick={() => socialLogin('kakao')} className="border border-slate-400 rounded-xl py-3 text-sm">카카오로 계속</button>
+            </div>
             {loadError && <p role="alert" className="text-xs text-rose-400">{loadError}</p>}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">이메일 계정</label>
@@ -456,6 +548,22 @@ export default function StageDiaryApp() {
               </div>
               <input id="fCasting" aria-label="캐스팅 배우 직접 입력" type="text" defaultValue={(viewMode.casting || []).join(', ')} onChange={e => setViewMode({...viewMode, casting: parseCasting(e.target.value)})} placeholder="배우 이름을 쉼표로 구분해 입력" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-3 text-sm" />
               <p className="text-xs text-slate-400 mt-2">태그를 여러 개 선택하거나 직접 입력·수정할 수 있습니다.</p>
+              <section className="mt-4 space-y-3 rounded-2xl border border-slate-700 p-4" aria-label="캐스팅 보드 사진">
+                <h3 className="text-sm font-semibold">캐스팅 보드 사진</h3>
+                <div className="flex flex-wrap gap-2">
+                  <label className={`rounded-xl bg-purple-600 text-white px-4 py-3 text-sm cursor-pointer ${imageLoading ? 'opacity-50' : ''}`}>
+                    사진 촬영
+                    <input aria-label="캐스팅 보드 사진 촬영" className="sr-only" type="file" accept="image/*" capture="environment" disabled={imageLoading} onChange={e => { const file = e.target.files?.[0]; if (file) void acceptPoster(file, 'casting_image'); e.target.value = ''; }} />
+                  </label>
+                  <label className={`rounded-xl border border-slate-700 px-4 py-3 text-sm cursor-pointer ${imageLoading ? 'opacity-50' : ''}`}>
+                    앨범에서 선택
+                    <input aria-label="캐스팅 보드 앨범에서 선택" className="sr-only" type="file" accept="image/*" disabled={imageLoading} onChange={e => { const file = e.target.files?.[0]; if (file) void acceptPoster(file, 'casting_image'); e.target.value = ''; }} />
+                  </label>
+                </div>
+                {imageLoading && <p role="status" className="text-xs text-slate-400">사진 처리 중…</p>}
+                {viewMode.casting_image && <><img src={viewMode.casting_image} alt="캐스팅 보드 미리보기" className="w-full rounded-xl" /><button type="button" disabled={imageLoading} onClick={() => setViewMode({ ...viewMode, casting_image: '' })} className="text-xs text-rose-400">캐스팅 보드 사진 삭제</button></>}
+                <p className="text-xs text-slate-400">배우 이름 입력과 함께 이용할 수 있습니다. 사진을 선택한 뒤 저장을 눌러주세요.</p>
+              </section>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -471,6 +579,21 @@ export default function StageDiaryApp() {
               <label className="block text-xs font-medium mb-1">간편 메모</label>
               <input type="text" id="fMemo" defaultValue={viewMode.memo} placeholder="메모" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white" />
             </div>
+            <section className="rounded-2xl border border-slate-700 p-4">
+              <label className="flex items-center gap-2 font-bold text-sm cursor-pointer">
+                <input type="checkbox" aria-controls="transfer-ticket-fields" checked={Boolean(viewMode.transferExpanded ?? (viewMode.phone_suffix || viewMode.transfer_image))} onChange={e => setViewMode({ ...viewMode, transferExpanded: e.target.checked })} className="h-4 w-4 accent-purple-600" />
+                대리 수령 · 양도 티켓
+              </label>
+              <div id="transfer-ticket-fields" hidden={!Boolean(viewMode.transferExpanded ?? (viewMode.phone_suffix || viewMode.transfer_image))} className="space-y-3 pt-4">
+              <label className="block text-xs" htmlFor="fPhoneSuffix">수령용 전화번호 뒷자리</label>
+              <input id="fPhoneSuffix" type="text" inputMode="numeric" maxLength={4} defaultValue={viewMode.phone_suffix || ''} placeholder="숫자 4자리" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3" />
+              <label className="block text-xs" htmlFor="transferImage">티켓 캡처 이미지</label>
+              <input id="transferImage" type="file" accept="image/*" disabled={imageLoading} onChange={e => { const file = e.target.files?.[0]; if (file) void acceptPoster(file, 'transfer_image'); e.target.value = ''; }} className="w-full text-xs" />
+              {imageLoading && <p role="status" className="text-xs">이미지 처리 중…</p>}
+              {viewMode.transfer_image && <><img src={viewMode.transfer_image} alt="저장할 양도 티켓 캡처" className="w-full rounded-xl" /><button type="button" onClick={() => setViewMode({ ...viewMode, transfer_image: '' })} className="text-rose-400 text-xs">캡처 삭제</button></>}
+              <p className="text-xs text-slate-400">저장 버튼을 눌러 보관하세요. 캡처와 전화번호는 일정 공유에 포함되지 않습니다.</p>
+              </div>
+            </section>
             <div>
               <label className="block text-xs font-medium mb-1">감상평 섹션 타이틀</label>
               <input type="text" id="fSectionTitle" defaultValue={viewMode.sectionTitle || '작품 감상평'} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-xs text-purple-300 mb-2" />
@@ -497,9 +620,19 @@ export default function StageDiaryApp() {
             </div>
           </div>
           <div className="p-6 space-y-6 overflow-y-auto min-h-0 flex-1 pb-16">
+            <section className="space-y-3 rounded-2xl border border-slate-700 p-4">
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={() => downloadCalendar(detailTicket)} className="bg-purple-600 text-white rounded-xl p-3 text-xs">내 캘린더에 등록</button>
+                <button onClick={() => shareEvent(detailTicket)} className="border border-purple-400 rounded-xl p-3 text-xs">함께 보는 일정 공유</button>
+              </div>
+              {shareNotice && <p role="status" className="text-xs text-purple-400">{shareNotice}</p>}
+              {shareLink && <input aria-label="공유할 일정 링크" readOnly value={shareLink} onFocus={e => e.target.select()} className="w-full bg-slate-800 p-2 rounded-lg text-xs" />}
+              {detailTicket.phone_suffix && <p className="text-sm">수령용 전화번호 뒷자리: <strong>{detailTicket.phone_suffix}</strong></p>}
+              {detailTicket.transfer_image && <a href={detailTicket.transfer_image} download="transfer-ticket.jpg"><img src={detailTicket.transfer_image} alt="양도 티켓 캡처 (눌러서 다운로드)" className="w-full rounded-xl" /></a>}
+            </section>
             {actionError && <p role="alert" className="text-sm text-rose-400">{actionError}</p>}
             <div className="flex space-x-4 items-center">
-              <img src={detailTicket.poster} className="w-24 h-36 object-cover rounded-xl border border-slate-700 shadow-lg" alt="포스터" />
+              {detailTicket.poster ? <img src={detailTicket.poster} className="w-24 h-36 object-cover rounded-xl border border-slate-700 shadow-lg" alt="포스터" /> : <div aria-label="포스터 없음" className="w-24 h-36 shrink-0 grid place-items-center rounded-xl bg-slate-800 text-3xl">🎭</div>}
               <div>
                 <span className="text-xs text-purple-400 font-semibold">{detailTicket.date} ({detailTicket.timeHour}:{detailTicket.timeMin})</span>
                 <h3 className="text-xl font-bold mt-1">{detailTicket.title}</h3>
@@ -512,6 +645,7 @@ export default function StageDiaryApp() {
               <div className="flex justify-between"><span className="text-slate-500">시야 만족도</span><span className="text-amber-500 font-bold">{detailTicket.seatRating}</span></div>
               {detailTicket.seatMemo && <div className="flex justify-between"><span className="text-slate-500">시야 메모</span><span className="italic">"{detailTicket.seatMemo}"</span></div>}
               <div className="flex justify-between"><span className="text-slate-500">캐스팅 배우</span><span className="font-bold">{detailTicket.casting?.join(', ')}</span></div>
+              {detailTicket.casting_image && <section className="space-y-2"><h3 className="text-sm font-semibold">캐스팅 보드</h3><a href={detailTicket.casting_image} download="casting-board.jpg"><img src={detailTicket.casting_image} alt="저장된 캐스팅 보드 (눌러서 다운로드)" className="w-full rounded-xl" /></a></section>}
               <div className="flex justify-between"><span className="text-slate-500">관람 금액</span><span className="font-bold">{formatNumber(detailTicket.price)}원</span></div>
               <div className="flex justify-between"><span className="text-slate-500">할인 정보</span><span className="font-bold">{detailTicket.discount || '없음'}</span></div>
             </div>
@@ -565,7 +699,7 @@ export default function StageDiaryApp() {
             <div className="relative">
               <button aria-label="테마 설정" aria-expanded={themeMenuOpen} onClick={() => setThemeMenuOpen(!themeMenuOpen)} className="p-2 text-slate-300 hover:bg-slate-800 transition rounded-full"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={theme === 'system' ? 'M3 4h18v13H3z M8 21h8 M12 17v4' : theme === 'light' ? 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z' : 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z'} /></svg></button>
               {themeMenuOpen && (
-                <div className="absolute right-0 mt-2 w-36 bg-slate-800 border border-slate-700 shadow-2xl rounded-2xl py-2 z-50 text-xs text-white">
+                <div className={`absolute right-0 mt-2 w-36 border shadow-2xl rounded-2xl py-2 z-50 text-xs ${isLight ? 'bg-white text-slate-900 border-slate-200' : 'bg-slate-800 text-slate-100 border-slate-700'}`}>
                   {(['light', 'dark', 'system'] as const).map((mode, index) => <button key={mode} onClick={() => { setTheme(mode); setThemeMenuOpen(false); }} className="w-full text-left px-4 py-2 hover:bg-purple-500/10 flex items-center justify-between"><span>{['라이트 모드', '다크 모드', '시스템 설정'][index]}</span>{theme === mode && <span>✓</span>}</button>)}
                 </div>
               )}
@@ -575,6 +709,7 @@ export default function StageDiaryApp() {
 
         {/* 탭 컨텐츠 영역 */}
         <main onClick={() => setThemeMenuOpen(false)} className="flex-1 min-h-0 overflow-y-auto pb-6 hide-scrollbar">
+          {renderSharedEvent()}
           {working && <p role="status" className="px-6 pt-3 text-xs text-purple-300">처리 중…</p>}
           {loadError && <p role="alert" className="px-6 pt-3 text-xs text-rose-400">{loadError}</p>}
           {actionError && <p role="alert" className="px-6 pt-3 text-xs text-rose-400">{actionError}</p>}
@@ -583,12 +718,12 @@ export default function StageDiaryApp() {
           {currentTab === 'home' && (
             <div className="p-6 space-y-6">
               <div className={`bg-gradient-to-br ${isLight ? 'from-purple-50 to-slate-50 border-purple-200 shadow-sm' : 'from-purple-900/40 to-slate-900 border-purple-500/20'} border rounded-2xl p-5`}>
-                <div className="flex justify-between items-start mb-4">
-                  <div>
+                <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
+                  <div className="min-w-0 flex-1 basis-48 break-words">
                     <p className="text-xs text-purple-300 font-semibold uppercase">Stage Diary Archive</p>
-                    <h2 className="text-xl font-bold mt-1">안녕하세요, {currentUser.email?.split('@')[0] || '관객'}님! 🎭</h2>
+                    <h2 className="text-xl font-bold mt-1"><span className="block">{displayName}님!</span><span className="block">안녕하세요! 🎭</span></h2>
                   </div>
-                  <span className="bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs px-2.5 py-1 rounded-full font-medium">{tickets.length >= 10 ? '관람 장인' : '나의 관람 아카이브'}</span>
+                  <span className="shrink-0 whitespace-nowrap bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs px-2.5 py-1 rounded-full font-medium">{tickets.length >= 10 ? '관람 장인' : '나의 관람 아카이브'}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-3 pt-3 border-t border-slate-800 text-center">
                   <div><p className="text-xs text-slate-400">총 관람</p><p className="text-lg font-bold mt-0.5">{tickets.length}회</p></div>
@@ -620,15 +755,16 @@ export default function StageDiaryApp() {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">배우별 모아보기 필터</h3>
-                  {selectedActorFilter && <button onClick={() => setSelectedActorFilter('')} className="text-xs text-purple-400 hover:underline">전체보기</button>}
+                  {selectedActorFilters.length > 0 && <button onClick={() => setSelectedActorFilters([])} className="text-xs text-purple-400 hover:underline">선택 취소</button>}
                 </div>
                 <div className="flex space-x-1.5 overflow-x-auto pb-1 hide-scrollbar">
-                  {actorsList.map(actor => <button key={actor} onClick={() => setSelectedActorFilter(actor)} className={`px-3 py-1 rounded-full text-xs whitespace-nowrap border ${selectedActorFilter === actor ? 'bg-purple-600 text-white border-purple-500' : 'bg-slate-900 text-slate-300 border-slate-800'}`}>{actor}</button>)}
+                  {allActors.map(actor => <button key={actor} aria-pressed={selectedActorFilters.includes(actor)} onClick={() => setSelectedActorFilters(prev => prev.includes(actor) ? prev.filter(value => value !== actor) : [...prev, actor])} className={`px-3 py-1 rounded-full text-xs whitespace-nowrap border ${selectedActorFilters.includes(actor) ? 'bg-purple-600 text-white border-purple-500' : 'bg-slate-900 text-slate-300 border-slate-800'}`}>{actor}</button>)}
                 </div>
               </div>
               <div className="space-y-4">
-                {tickets.filter(t => !selectedActorFilter || t.casting?.includes(selectedActorFilter)).map(renderTicketCard)}
-                {!tickets.some(t => !selectedActorFilter || t.casting?.includes(selectedActorFilter)) && <p className="text-xs text-slate-500 text-center py-10">해당 조건의 관람 기록이 없습니다.</p>}
+                <p className="text-xs text-slate-400">여러 명 선택 가능 · 선택한 배우가 모두 출연한 기록을 보여줍니다.</p>
+                {filteredTickets.map(renderTicketCard)}
+                {!filteredTickets.length && <p className="text-xs text-slate-500 text-center py-10">해당 조건의 관람 기록이 없습니다.</p>}
               </div>
             </div>
           )}
@@ -644,15 +780,16 @@ export default function StageDiaryApp() {
                 <button onClick={() => openFullPageNew()} className="bg-purple-600 text-white text-xs px-3 py-2 rounded-xl">+ 일정 등록</button>
               </div>
               <div className="grid grid-cols-7 gap-2 text-center text-xs text-slate-400">
-                {['월','화','수','목','금','토','일'].map((label,i) => <span key={label} className={i === 5 ? 'text-blue-400' : i === 6 ? 'text-rose-400' : ''}>{label}</span>)}
+                {['일','월','화','수','목','금','토'].map((label,i) => <span key={label} className={i === 6 ? 'text-blue-400' : i === 0 ? 'text-rose-400' : ''}>{label}</span>)}
               </div>
               <div className="grid grid-cols-7 gap-2">
-                {Array.from({length: (new Date(calendarYear, calendarMonth-1, 1).getDay()+6)%7}, (_,i) => <div key={'blank'+i} />)}
+                {Array.from({length: new Date(calendarYear, calendarMonth-1, 1).getDay()}, (_,i) => <div key={'blank'+i} />)}
                 {Array.from({length: new Date(calendarYear, calendarMonth, 0).getDate()}, (_,i) => i+1).map(day => {
                   const date = `${calendarYear}-${String(calendarMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                   const records = tickets.filter(t => t.date === date);
+                  const weekday = new Date(calendarYear, calendarMonth - 1, day).getDay();
                   return <div key={day} className={`min-h-[90px] min-w-0 border rounded-xl p-1 flex flex-col ${records.length ? 'bg-purple-950/40 border-purple-500' : 'bg-slate-900 border-slate-800'}`}>
-                    <button aria-label={`${date} 기록 등록`} onClick={() => openFullPageNew(date)} className={`text-left self-stretch flex items-start justify-start pt-1 text-xs font-bold flex-1 ${date === today() ? 'text-purple-400' : ''}`}>{day}</button>
+                    <button aria-label={`${date} 기록 등록`} aria-current={date === today() ? 'date' : undefined} onClick={() => openFullPageNew(date)} className={`text-left self-stretch flex items-start justify-start pt-1 text-xs font-bold flex-1 ${weekday === 0 ? 'text-rose-400' : weekday === 6 ? 'text-blue-400' : date === today() ? 'text-purple-400' : ''} ${date === today() ? 'underline underline-offset-4' : ''}`}>{day}</button>
                     <div className="flex flex-wrap justify-center gap-1">{records.map(t => <button key={t.id} aria-label={`${t.title} 상세 보기`} onClick={() => setDetailTicket(t)}>{t.poster ? <img src={t.poster} alt={t.title} className="w-6 h-8 rounded object-cover" /> : <span className="text-[9px] text-purple-300 break-all">{t.title}</span>}</button>)}</div>
                   </div>;
                 })}
@@ -665,7 +802,16 @@ export default function StageDiaryApp() {
               <h2 className="text-lg font-bold">마이페이지 & 설정</h2>
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col items-center text-center space-y-2">
                 <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-purple-600 to-rose-500 shadow-md flex items-center justify-center text-white text-2xl font-bold">S</div>
-                <h3 className="text-base font-bold">뮤지컬러버 님</h3>
+                <h3 className="text-base font-bold max-w-full break-words">{displayName} 님</h3>
+                {editingNickname ? <form onSubmit={saveNickname} className="w-full space-y-2">
+                  <label htmlFor="nickname" className="block text-left text-xs font-medium">닉네임 (1~20자)</label>
+                  <input id="nickname" autoComplete="nickname" autoFocus value={nicknameDraft!.value} disabled={working} onChange={e => setNicknameDraft({ owner: currentUser.id, value: e.target.value })} className="w-full min-w-0 rounded-xl border border-slate-700 bg-slate-800 px-3 py-3 text-sm" />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" disabled={working} onClick={() => { setNicknameDraft(null); setNicknameNotice(null); }} className="rounded-xl border border-slate-700 px-4 py-2 text-xs">취소</button>
+                    <button type="submit" disabled={working} className="rounded-xl bg-purple-600 text-white px-4 py-2 text-xs">{working ? '저장 중…' : '닉네임 저장'}</button>
+                  </div>
+                </form> : <button disabled={working} onClick={() => { setNicknameDraft({ owner: currentUser.id, value: displayName }); setNicknameNotice(null); }} className="text-xs text-purple-400 underline">닉네임 수정</button>}
+                {nicknameNotice && nicknameNotice.owner === currentUser.id && <p role="status" className="text-xs text-purple-400">{nicknameNotice.text}</p>}
                 <p className="text-xs text-slate-400">{currentUser?.email}</p>
                 <button onClick={handleLogout} className="text-xs text-rose-500 underline mt-2">로그아웃</button>
               </div>

@@ -45,8 +45,8 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   const module = { exports: {} };
   const context = {
     exports: module.exports, module,
-    require(name) { if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
-    window: { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
+    require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
+    URL, window: { location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
     localStorage: { getItem() { return null; }, setItem() {} },
     document: { getElementById: id => fields[id] || { value: '' } },
     confirm: () => true, alert() {}, console,
@@ -61,7 +61,7 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   return { render, flush, button, nodes, text: () => text(tree), calls, fields, setFailure(value) { fail = value; } };
 }
 
-test('calendar: Monday alignment, leap year, year rollover and selected date', async () => {
+test('calendar: Sunday alignment, leap year, year rollover and selected date', async () => {
   const h = await setup();
   h.button('캘린더').props.onClick(); h.render();
   let year = new Date().getFullYear(), month = new Date().getMonth() + 1;
@@ -73,7 +73,7 @@ test('calendar: Monday alignment, leap year, year rollover and selected date', a
   const days = h.nodes().filter(n => n.type === 'button' && /2024-02-\d+/.test(n.props['aria-label'] || ''));
   assert.equal(days.length, 29);
   const grid = h.nodes().find(n => n.props?.className === 'grid grid-cols-7 gap-2');
-  assert.equal(grid.props.children[0].length, 3); // Thursday, after Mon/Tue/Wed.
+  assert.equal(grid.props.children[0].length, 4); // Thursday, after Sun/Mon/Tue/Wed.
   h.button('2024-02-29 기록 등록').props.onClick(); h.render();
   assert.equal(h.nodes().find(n => n.props?.id === 'fDate').props.defaultValue, '2024-02-29');
 });

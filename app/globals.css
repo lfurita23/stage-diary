@@ -46,7 +46,7 @@ nav { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
 
 /* Keep the app inside the visible viewport; only the middle panel scrolls. */
 .diary-screen { min-height: 100dvh; width: 100%; }
-.diary-shell { height: min(850px, calc(100dvh - 32px)); min-height: 0; flex-shrink: 0; }
+.diary-shell { height: min(850px, calc(100dvh - 32px)); min-height: 0; flex-shrink: 0; isolation: isolate; }
 .diary-nav { position: relative; padding-bottom: calc(.75rem + env(safe-area-inset-bottom, 0px)); }
 .diary-shell > header, .diary-shell > nav { flex-shrink: 0; }
 .diary-shell > main, .diary-shell > .overflow-y-auto { overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
@@ -59,6 +59,17 @@ nav { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
 .diary-shell input, .diary-shell textarea, .diary-shell select { max-width: 100%; }
 .diary-shell button:focus-visible, .diary-shell [contenteditable]:focus-visible { outline: 2px solid #c084fc; outline-offset: 2px; }
 [data-theme="light"] .divide-slate-700 > :not(:last-child) { border-color: #e2e8f0; }
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+[data-theme="light"] .bg-purple-900\/20, [data-theme="light"] .bg-purple-500\/20 { background-color: #faf5ff; }
+[data-theme="light"] .bg-slate-800\/50 { background-color: #f1f5f9; }
+[data-theme="light"] .text-slate-500 { color: #526176; }
+[data-theme="light"] .text-amber-400 { color: #92400e; }
+[data-theme="light"] .text-rose-400 { color: #be123c; }
+[data-theme="light"] .text-blue-400 { color: #1d4ed8; }
+[data-theme="light"] .hover\:bg-slate-800:hover { background-color: #e2e8f0; }
+.diary-shell:has(input[type="email"]) { overflow-y: auto; justify-content: flex-start; }
+.diary-shell > header { padding-top: max(1rem, env(safe-area-inset-top, 0px)); }
 @media (max-width: 639px) {
   html, body { height: 100%; overflow: hidden; }
   .diary-screen { position: fixed; inset: 0; bottom: auto; top: var(--diary-viewport-top, 0px); height: var(--diary-viewport-height, 100dvh); min-height: 0; padding: 0; }

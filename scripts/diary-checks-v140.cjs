@@ -22,6 +22,12 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
     auth: {
       onAuthStateChange() { return { data: { subscription: { unsubscribe() {} } } }; },
       async getSession() { return { data: { session: authenticated ? { user } : null }, error: null }; },
+      async updateUser({ data }) {
+        calls.push({ action: 'updateUser', data });
+        if (fail) return { data: { user: null }, error: { message: fail } };
+        user.user_metadata = { ...user.user_metadata, ...data };
+        return { data: { user: { ...user } }, error: null };
+      },
     },
     from(table) {
       const call = { table, action: 'select', filters: [] };
@@ -45,10 +51,10 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   const module = { exports: {} };
   const context = {
     exports: module.exports, module,
-    require(name) { if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
-    window: { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
+    require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
+    window: { location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
     localStorage: { getItem(key) { return storage.get(key) ?? null; }, setItem(key,value) { storage.set(key,value); } },
-    URL: { createObjectURL() { return 'blob:test'; }, revokeObjectURL() {} },
+    URL: class extends URL { static createObjectURL() { return 'blob:test'; } static revokeObjectURL() {} },
     Image: class { naturalWidth = 2400; naturalHeight = 3600; async decode() {} },
     document: { getElementById: id => fields[id] || { value: '' }, createElement() { return { width: 0, height: 0, getContext() { return {fillRect() {}, drawImage() {}}; }, toDataURL() { return 'data:image/jpeg;base64,compressed-test-image'; } }; } },
     confirm: () => true, alert() {}, console,
@@ -63,7 +69,101 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   return { render, flush, button, nodes, text: () => text(tree), calls, fields, storage, setFailure(value) { fail = value; } };
 }
 
-test('calendar: Monday alignment, leap year, year rollover and selected date', async () => {
+test('nickname saves to account, updates greeting, validates and retains failed draft', async () => {
+  const h = await setup();
+  h.button('마이페이지').props.onClick(); h.render(); h.button('닉네임 수정').props.onClick(); h.render();
+  const input = () => h.nodes().find(n => n.props?.id === 'nickname');
+  const save = () => h.nodes().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} });
+  input().props.onChange({ target: { value: '  무대친구  ' } }); h.render();
+  await save(); h.render();
+  assert.equal(h.calls.find(c => c.action === 'updateUser').data.nickname, '무대친구');
+  assert.ok(h.text().includes('무대친구 님'));
+  h.button('홈').props.onClick(); h.render();
+  assert.ok(h.text().includes('무대친구님!안녕하세요! 🎭'));
+  await h.flush(); assert.ok(h.text().includes('무대친구님!안녕하세요! 🎭'));
+  h.button('마이페이지').props.onClick(); h.render(); h.button('닉네임 수정').props.onClick(); h.render();
+  input().props.onChange({ target: { value: '   ' } }); h.render(); await save(); h.render();
+  assert.ok(h.text().includes('1~20자')); assert.equal(h.calls.filter(c => c.action === 'updateUser').length, 1);
+  input().props.onChange({ target: { value: '다른닉네임' } }); h.render(); h.setFailure('offline'); await save(); h.render();
+  assert.equal(input().props.value, '다른닉네임'); assert.ok(h.text().includes('저장하지 못했습니다'));
+  h.button('취소').props.onClick(); h.render(); assert.ok(h.text().includes('무대친구 님'));
+});
+
+test('actor filters support multiple selections, individual toggle and full reset', async () => {
+  const rows = [{ id: 1, title: 'First show', date: '2026-11-02', casting: ['새 배우 A'] }, { id: 2, title: 'Second show', date: '2026-11-01', casting: ['새 배우 B'] }, { id: 3, title: 'Other show', date: '2026-10-30', casting: ['다른 배우'] }, { id: 4, title: 'Shared show', date: '2026-11-03', casting: ['새 배우 A', '새 배우 B'] }];
+  const h = await setup({ rows }); h.button('티켓북').props.onClick(); h.render();
+  h.button('새 배우 A').props.onClick(); h.render();
+  assert.ok(h.text().includes('First show')); assert.ok(!h.text().includes('Second show'));
+  h.button('새 배우 B').props.onClick(); h.render();
+  assert.ok(h.text().includes('Shared show')); assert.ok(!h.text().includes('First show')); assert.ok(!h.text().includes('Second show')); assert.ok(!h.text().includes('Other show'));
+  assert.equal(h.button('새 배우 A').props['aria-pressed'], true);
+  h.button('새 배우 A').props.onClick(); h.render();
+  assert.ok(!h.text().includes('First show')); assert.ok(h.text().includes('Second show'));
+  h.button('선택 취소').props.onClick(); h.render();
+  assert.ok(h.text().includes('First show')); assert.ok(h.text().includes('Other show'));
+  assert.equal(h.button('새 배우 B').props['aria-pressed'], false);
+  h.button('새 배우 A').props.onClick(); h.render(); h.button('다른 배우').props.onClick(); h.render();
+  assert.ok(h.text().includes('해당 조건의 관람 기록이 없습니다.')); assert.ok(!h.text().includes('Shared show'));
+});
+
+test('transfer fields start collapsed, and saved custom theatre reuses station', async () => {
+  const h = await setup({ rows: [{ id: 1, title: 'Saved show', date: '2026-11-02', theater: '신규 공연장', station: '신규 역 2번 출구', casting: [] }] });
+  h.button('새 관람 기록 등록').props.onClick(); h.render();
+  const checkbox = () => h.nodes().find(n => n.type === 'input' && n.props?.type === 'checkbox');
+  const fields = () => h.nodes().find(n => n.props?.id === 'transfer-ticket-fields');
+  assert.equal(checkbox().props.checked, false); assert.equal(fields().props.hidden, true);
+  checkbox().props.onChange({ target: { checked: true } }); h.render();
+  assert.equal(checkbox().props.checked, true); assert.equal(fields().props.hidden, false);
+  checkbox().props.onChange({ target: { checked: false } }); h.render();
+  assert.equal(fields().props.hidden, true);
+  h.fields.fStation = { value: '' };
+  h.nodes().find(n => n.props?.id === 'fTheater').props.onChange({ target: { value: '신규 공연장' } });
+  assert.equal(h.fields.fStation.value, '신규 역 2번 출구');
+  h.nodes().find(n => n.props?.id === 'fTheater').props.onChange({ target: { value: '처음 가는 공연장' } });
+  assert.equal(h.fields.fStation.value, '');
+});
+
+test('casting board accepts camera or album, persists independently, and can be removed', async () => {
+  const h = await setup();
+  h.button('새 관람 기록 등록').props.onClick(); h.render();
+  const camera = h.nodes().find(n => n.props?.['aria-label'] === '캐스팅 보드 사진 촬영');
+  const album = h.nodes().find(n => n.props?.['aria-label'] === '캐스팅 보드 앨범에서 선택');
+  assert.equal(camera.props.capture, 'environment'); assert.equal(album.props.capture, undefined);
+  album.props.onChange({ target: { files: [{ type: 'image/png', size: 1024 }], value: 'board.png' } });
+  await new Promise(setImmediate); h.render();
+  Object.assign(h.fields, { fTitle: { value: 'Casting ticket' }, fDate: { value: '2026-11-20' }, fTheater: { value: 'Theater' }, fCasting: { value: '배우1, 배우2' } });
+  await h.button('저장').props.onClick(); h.render();
+  const row = h.calls.find(c => c.action === 'insert').row;
+  assert.match(row.casting_image, /^data:image\/jpeg;base64,/); assert.equal(row.poster, ''); assert.equal(row.casting.length, 2);
+  h.button('수정').props.onClick(); h.render(); h.button('캐스팅 보드 사진 삭제').props.onClick(); h.render();
+  await h.button('저장').props.onClick(); h.render();
+  assert.equal(h.calls.find(c => c.action === 'update').row.casting_image, '');
+});
+
+test('transfer capture and phone suffix persist, validate and can be cleared', async () => {
+  const h = await setup();
+  h.button('새 관람 기록 등록').props.onClick(); h.render();
+  Object.assign(h.fields, { fTitle: { value: 'Transfer ticket' }, fDate: { value: '2026-11-20' }, fTheater: { value: 'Theater' }, fPhoneSuffix: { value: '0123' } });
+  const input = h.nodes().find(n => n.props?.id === 'transferImage');
+  input.props.onChange({ target: { files: [{ type: 'image/png', size: 1024 }], value: 'capture.png' } });
+  await new Promise(setImmediate); h.render();
+  await h.button('저장').props.onClick(); h.render();
+  const row = h.calls.find(c => c.action === 'insert').row;
+  assert.equal(row.phone_suffix, '0123');
+  assert.match(row.transfer_image, /^data:image\/jpeg;base64,/);
+  h.button('수정').props.onClick(); h.render();
+  h.fields.fPhoneSuffix.value = '123';
+  await h.button('저장').props.onClick(); h.render();
+  assert.match(h.text(), /숫자 4자리/);
+  assert.equal(h.calls.filter(c => c.action === 'update').length, 0);
+  h.fields.fPhoneSuffix.value = '';
+  h.button('캡처 삭제').props.onClick(); h.render();
+  await h.button('저장').props.onClick(); h.render();
+  const update = h.calls.find(c => c.action === 'update');
+  assert.equal(update.row.phone_suffix, ''); assert.equal(update.row.transfer_image, '');
+});
+
+test('calendar: Sunday alignment, leap year, year rollover and selected date', async () => {
   const h = await setup();
   h.button('캘린더').props.onClick(); h.render();
   let year = new Date().getFullYear(), month = new Date().getMonth() + 1;
@@ -75,7 +175,10 @@ test('calendar: Monday alignment, leap year, year rollover and selected date', a
   const days = h.nodes().filter(n => n.type === 'button' && /2024-02-\d+/.test(n.props['aria-label'] || ''));
   assert.equal(days.length, 29);
   const grid = h.nodes().find(n => n.props?.className === 'grid grid-cols-7 gap-2');
-  assert.equal(grid.props.children[0].length, 3); // Thursday, after Mon/Tue/Wed.
+  assert.equal(grid.props.children[0].length, 4); // Thursday, after Sun/Mon/Tue/Wed.
+  assert.match(h.button('2024-02-04 기록 등록').props.className, /text-rose-400/);
+  assert.match(h.button('2024-02-03 기록 등록').props.className, /text-blue-400/);
+  assert.ok(!/text-rose-400|text-blue-400/.test(h.button('2024-02-05 기록 등록').props.className));
   h.button('2024-02-29 기록 등록').props.onClick(); h.render();
   assert.equal(h.nodes().find(n => n.props?.id === 'fDate').props.defaultValue, '2024-02-29');
 });
