@@ -2,6 +2,15 @@
 
 확인일: 2026-11-05
 
+## 2026-11-05 연결 권한 추가 후 진행
+
+- 첫 번째 Codex Supabase 연결을 novel-team으로 재연결한 뒤 utvoealamrtiuutdtvlb 접근이 성공했다. 현재 도구는 소설 프로젝트만 보여 주므로 티켓 프로젝트 서버 배포 시 연결을 다시 전환해야 할 수 있다.
+- 소설 프로젝트 SQL 확인: Auth 계정 0명, episodes/lore_books/novels 모두 RLS 활성화. 보안 advisor lints 없음. 기존 테이블/데이터는 변경하지 않았다.
+- 소설 프로젝트 Site URL을 GitHub Pages 운영 주소로 저장하고 운영 루트/복구, localhost:3001 루트/복구 4개를 허용했다. 이메일 인증 ON 유지, 아직 custom SMTP 없음.
+- Story Seed 로컬 코드에 전용 공개 연결 정보, 프로젝트별 세션 저장 키, 공용 계정 재가입 안내를 준비했다. 기존 원고 저장 키/백업은 유지했다. 테스트 14개와 Pages build가 통과했고 export JS에서 utvo URL만 존재함을 확인했다.
+- 사용자는 도메인이 없어 Gmail SMTP를 먼저 사용하기로 했다. SMTP 화면의 발신 이름/호스트를 준비했으나 이메일/앱 비밀번호 입력과 저장은 사용자가 직접 해야 한다. 아직 운영 배포 전환/회원 탈퇴 활성화는 하지 않았다.
+- Stage Diary 기존 복구/탈퇴 테스트 포함 27개 및 TypeScript 검사를 다시 통과했다.
+
 ## 확인된 현재 상태
 
 | 용도 | 조직 | 프로젝트 이름 | 프로젝트 ID |
