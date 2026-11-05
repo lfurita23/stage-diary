@@ -9,9 +9,9 @@ const source = ts.transpileModule(fs.readFileSync('app/page.tsx', 'utf8'), {
   compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
 }).outputText;
 
-async function setup({ authenticated = true, kakaoEnabled = false, rows = [], failure = '', rejectLoad = false, storage = new Map() } = {}) {
+async function setup({ authenticated = true, kakaoEnabled = false, deletionEnabled = false, rows = [], failure = '', rejectLoad = false, storage = new Map() } = {}) {
   const state = [], deps = [], refs = [], pending = [], calls = [], fields = {};
-  let cursor = 0, effectCursor = 0, refCursor = 0, tree, fail = failure;
+  let cursor = 0, effectCursor = 0, refCursor = 0, tree, fail = failure, authCallback;
   const user = { id: 'test-user', email: 'test@example.invalid' };
   const hooks = {
     useState(initial) { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], value => { state[i] = typeof value === 'function' ? value(state[i]) : value; }]; },
@@ -19,11 +19,20 @@ async function setup({ authenticated = true, kakaoEnabled = false, rows = [], fa
     useEffect(fn, next) { const i = effectCursor++; if (!deps[i] || next.some((v, j) => v !== deps[i][j])) { deps[i] = next; pending.push(fn); } },
   };
   const db = {
+    functions: { async invoke(name, options) {
+      if (options.method === 'GET') return { data: { enabled: deletionEnabled }, error: null };
+      calls.push({ action: 'withdraw', name, body: options.body });
+      return { data: fail ? null : { deleted: true }, error: fail ? { message: fail } : null };
+    } },
     auth: {
-      onAuthStateChange() { return { data: { subscription: { unsubscribe() {} } } }; },
+      onAuthStateChange(callback) { authCallback = callback; return { data: { subscription: { unsubscribe() {} } } }; },
       async getSession() { return { data: { session: authenticated ? { user } : null }, error: null }; },
+      async getUser() { return { data: { user: fail ? null : user }, error: fail ? { message: fail } : null }; },
+      async resetPasswordForEmail(email, options) { calls.push({ action: 'resetPassword', email, ...options }); return { error: fail ? { message: fail } : null }; },
+      async signOut(options) { calls.push({ action: 'signOut', ...options }); authCallback?.('SIGNED_OUT', null); return { error: null }; },
       async signInWithOAuth(options) { calls.push({ action: 'oauth', ...options }); return { error: fail ? { message: fail } : null }; },
-      async updateUser({ data }) {
+      async updateUser({ data, password }) {
+        if (password) { calls.push({ action: 'updatePassword' }); return { data: { user }, error: fail ? { message: fail } : null }; }
         calls.push({ action: 'updateUser', data });
         if (fail) return { data: { user: null }, error: { message: fail } };
         user.user_metadata = { ...user.user_metadata, ...data };
@@ -55,7 +64,7 @@ async function setup({ authenticated = true, kakaoEnabled = false, rows = [], fa
     require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db, getKakaoLoginEnabled: async () => kakaoEnabled }; return require(name); },
     AbortController, URLSearchParams, setTimeout() { return 0; }, clearTimeout() {},
     window: { innerHeight: 760, addEventListener() {}, removeEventListener() {}, location: { href: 'https://example.invalid/', origin: 'https://example.invalid' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
-    localStorage: { getItem(key) { return storage.get(key) ?? null; }, setItem(key,value) { storage.set(key,value); } },
+    localStorage: { getItem(key) { return storage.get(key) ?? null; }, setItem(key,value) { storage.set(key,value); }, removeItem(key) { storage.delete(key); } },
     URL: class extends URL { static createObjectURL() { return 'blob:test'; } static revokeObjectURL() {} },
     Image: class { naturalWidth = 2400; naturalHeight = 3600; async decode() {} },
     document: { documentElement: { style: { setProperty() {}, removeProperty() {} } }, getElementById: id => fields[id] || { value: '' }, createElement() { return { width: 0, height: 0, getContext() { return {fillRect() {}, drawImage() {}}; }, toDataURL() { return 'data:image/jpeg;base64,compressed-test-image'; } }; } },
@@ -68,8 +77,55 @@ async function setup({ authenticated = true, kakaoEnabled = false, rows = [], fa
   function text(node) { if (node == null || typeof node === 'boolean') return ''; if (typeof node !== 'object') return String(node); return [node.props?.children].flat(Infinity).map(text).join(''); }
   function button(label) { const found = nodes().find(n => n.type === 'button' && (n.props['aria-label'] === label || text(n) === label)); assert.ok(found, `button: ${label}`); return found; }
   await flush();
-  return { render, flush, button, nodes, text: () => text(tree), calls, fields, storage, setFailure(value) { fail = value; } };
+  return { render, flush, button, nodes, text: () => text(tree), calls, fields, storage, emitAuth(event, sessionUser = user) { authCallback(event, sessionUser ? { user: sessionUser } : null); }, setFailure(value) { fail = value; } };
 }
+
+test('withdrawal is hidden until backend is ready and requires agreement and exact confirmation', async () => {
+  const unavailable = await setup(); unavailable.button('마이페이지').props.onClick(); await unavailable.flush();
+  assert.ok(!unavailable.nodes().some(n => n.type === 'button' && n.props.children === '회원 탈퇴'));
+  const h = await setup({ deletionEnabled: true }); h.button('마이페이지').props.onClick(); await h.flush();
+  h.button('회원 탈퇴').props.onClick(); h.render();
+  const submit = () => h.nodes().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} });
+  await submit(); assert.ok(!h.calls.some(c => c.action === 'withdraw'));
+  h.nodes().find(n => n.props?.type === 'checkbox').props.onChange({ target: { checked: true } }); h.render();
+  h.nodes().find(n => n.props?.id === 'withdrawConfirmation').props.onChange({ target: { value: '탈퇴' } }); h.render();
+  h.setFailure('unavailable'); await submit(); h.render();
+  assert.match(h.text(), /탈퇴를 완료하지 못했습니다/);
+  h.setFailure(''); await submit(); h.render();
+  const call = h.calls.find(c => c.action === 'withdraw'); assert.equal(call.name, 'delete-stage-diary-account');
+  assert.deepEqual(Object.keys(call.body), ['confirmation']);
+  assert.match(h.text(), /회원 탈퇴가 완료되었습니다/); assert.ok(h.button('로그인'));
+});
+
+test('password reset uses the current app URL, gives a neutral response and avoids repeat sends', async () => {
+  const h = await setup({ authenticated: false }); h.button('비밀번호 찾기').props.onClick(); h.render();
+  h.nodes().find(n => n.props?.id === 'resetEmail').props.onChange({ target: { value: '  member@example.invalid  ' } }); h.render();
+  const submit = () => h.nodes().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} });
+  await submit(); h.render();
+  assert.equal(h.calls.find(c => c.action === 'resetPassword').email, 'member@example.invalid');
+  assert.equal(h.calls.find(c => c.action === 'resetPassword').redirectTo, 'https://example.invalid/');
+  assert.match(h.text(), /가입된 계정이 있다면/); await submit();
+  assert.equal(h.calls.filter(c => c.action === 'resetPassword').length, 1);
+  await h.button('로그인 화면으로 돌아가기').props.onClick(); h.render();
+  h.button('아이디(이메일) 찾기').props.onClick(); h.render(); assert.match(h.text(), /카카오로 계속/);
+});
+
+test('recovery session shows new-password form, verifies session and returns to login after update', async () => {
+  const h = await setup(); h.emitAuth('PASSWORD_RECOVERY'); h.render();
+  assert.match(h.text(), /새 비밀번호 설정/);
+  const field = id => h.nodes().find(n => n.props?.id === id);
+  const submit = () => h.nodes().find(n => n.type === 'form').props.onSubmit({ preventDefault() {} });
+  field('newPassword').props.onChange({ target: { value: 'test-password' } }); h.render();
+  field('confirmPassword').props.onChange({ target: { value: 'different-password' } }); h.render();
+  await submit(); h.render(); assert.match(h.text(), /일치하지 않습니다/); assert.ok(!h.calls.some(c => c.action === 'updatePassword'));
+  field('confirmPassword').props.onChange({ target: { value: 'test-password' } }); h.render();
+  h.setFailure('expired'); await submit(); h.render(); assert.ok(!h.calls.some(c => c.action === 'updatePassword'));
+  h.setFailure(''); await submit(); h.render();
+  assert.equal(h.calls.filter(c => c.action === 'updatePassword').length, 1);
+  assert.ok(h.calls.some(c => c.action === 'signOut' && c.scope === 'global'));
+  assert.match(h.text(), /비밀번호 변경 완료/);
+  await h.button('로그인 화면으로 돌아가기').props.onClick(); h.render(); assert.ok(h.button('로그인'));
+});
 
 test('Kakao sign-in only appears when enabled, works in both auth modes and recovers from errors', async () => {
   const disabled = await setup({ authenticated: false });

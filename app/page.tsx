@@ -28,6 +28,16 @@ export default function StageDiaryApp() {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [kakaoEnabled, setKakaoEnabled] = useState(false);
+  const [accountView, setAccountView] = useState<'none' | 'email-help' | 'reset-request' | 'new-password' | 'password-updated' | 'withdraw'>('none');
+  const [accountNotice, setAccountNotice] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetSent, setResetSent] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [recoveryOwner, setRecoveryOwner] = useState('');
+  const [deleteAccountReady, setDeleteAccountReady] = useState(false);
+  const [deleteAccountAgreed, setDeleteAccountAgreed] = useState(false);
+  const [deleteAccountText, setDeleteAccountText] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -56,7 +66,7 @@ export default function StageDiaryApp() {
     const raw = new URL(window.location.href).searchParams.get('event');
     const callback = new URL(window.location.href);
     if (callback.searchParams.has('error') || new URLSearchParams(window.location.hash?.slice(1) || '').has('error')) {
-      setLoadError('카카오 로그인을 완료하지 못했습니다. 다시 시도하거나 이메일로 로그인해주세요.');
+      setLoadError('인증 링크가 만료되었거나 로그인을 완료하지 못했습니다. 다시 시도해주세요.');
     }
     if (raw) {
       const event = parseSharedEvent(raw);
@@ -84,6 +94,16 @@ export default function StageDiaryApp() {
   const [intermissionCheckedKeywords, setIntermissionCheckedKeywords] = useState<string[]>([]);
   const [newKeywordInput, setNewKeywordInput] = useState('');
 
+  useEffect(() => {
+    let active = true;
+    setDeleteAccountReady(false);
+    if (currentTab !== 'mypage' || !currentUser || currentUser.id === 'demo-user' || !supabase.functions?.invoke) return;
+    void supabase.functions.invoke('delete-stage-diary-account', { method: 'GET' })
+      .then(({ data, error }) => { if (active) setDeleteAccountReady(!error && data?.enabled === true); })
+      .catch(() => { if (active) setDeleteAccountReady(false); });
+    return () => { active = false; };
+  }, [currentTab, currentUser?.id]);
+
   // 테마 계산
   const isLight = theme === 'light' || (theme === 'system' && systemLight);
 
@@ -95,12 +115,26 @@ export default function StageDiaryApp() {
     const saved = localStorage.getItem('stage-diary-theme-v2');
     if (saved === 'dark' || saved === 'light' || saved === 'system') setTheme(saved);
     let active = true;
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active) { setCurrentUser(session?.user ?? null); setAuthReady(true); }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+      if (event === 'PASSWORD_RECOVERY' && session?.user) {
+        setRecoveryOwner(session.user.id); setAccountView('new-password'); setAccountNotice('');
+        try { window.sessionStorage?.setItem('stage-diary-recovery-owner', session.user.id); } catch {}
+      }
+      if (event === 'SIGNED_OUT') {
+        setRecoveryOwner('');
+        try { window.sessionStorage?.removeItem('stage-diary-recovery-owner'); } catch {}
+      }
+      setCurrentUser(session?.user ?? null); setAuthReady(true);
     });
     supabase.auth.getSession().then(({ data, error }) => {
       if (!active) return;
       if (error) setLoadError(error.message);
+      try {
+        if (data.session?.user && window.sessionStorage?.getItem('stage-diary-recovery-owner') === data.session.user.id) {
+          setRecoveryOwner(data.session.user.id); setAccountView('new-password');
+        }
+      } catch {}
       setCurrentUser(data.session?.user ?? null); setAuthReady(true);
     }).catch(() => { if (active) { setLoadError('로그인 상태를 확인하지 못했습니다. 새로고침 후 다시 시도해주세요.'); setAuthReady(true); } });
     return () => { active = false; subscription.unsubscribe(); media.removeEventListener('change', sync); };
@@ -301,6 +335,78 @@ export default function StageDiaryApp() {
     } finally { busy.current = false; setWorking(false); }
   };
 
+  const requestPasswordReset = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (busy.current || resetSent) return;
+    const email = resetEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setAccountNotice('가입할 때 사용한 이메일 주소를 입력해주세요.'); return; }
+    busy.current = true; setWorking(true); setAccountNotice('');
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/` });
+      if (error) throw error;
+      setResetSent(true);
+      setAccountNotice('입력한 이메일로 가입된 계정이 있다면 재설정 메일이 발송됩니다. 스팸함도 확인해주세요.');
+    } catch { setAccountNotice('메일을 보내지 못했습니다. 잠시 후 다시 시도해주세요.'); }
+    finally { busy.current = false; setWorking(false); }
+  };
+
+  const updateRecoveredPassword = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (busy.current) return;
+    if (!currentUser || currentUser.id !== recoveryOwner) { setAccountNotice('재설정 링크를 다시 요청해주세요.'); return; }
+    if (newPassword.length < 8) { setAccountNotice('비밀번호는 8자 이상 입력해주세요.'); return; }
+    if (newPassword !== confirmPassword) { setAccountNotice('두 비밀번호가 일치하지 않습니다.'); return; }
+    busy.current = true; setWorking(true); setAccountNotice('');
+    try {
+      const { data, error: userError } = await supabase.auth.getUser();
+      if (userError || data.user?.id !== recoveryOwner) throw new Error('invalid recovery session');
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      try { window.sessionStorage?.removeItem('stage-diary-recovery-owner'); } catch {}
+      setRecoveryOwner(''); setNewPassword(''); setConfirmPassword(''); setAuthPassword('');
+      const { error: signOutError } = await supabase.auth.signOut({ scope: 'global' });
+      if (signOutError) await supabase.auth.signOut({ scope: 'local' });
+      setCurrentUser(null); setAccountView('password-updated');
+      setAccountNotice('비밀번호를 변경했습니다. 새 비밀번호로 로그인해주세요.');
+    } catch { setAccountNotice('비밀번호를 변경하지 못했습니다. 인증 링크의 유효기간과 비밀번호 조건을 확인해주세요.'); }
+    finally { busy.current = false; setWorking(false); }
+  };
+
+  const closeAccountHelp = async () => {
+    if (busy.current) return;
+    if (accountView === 'new-password') {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) { setAccountNotice('로그아웃하지 못했습니다. 다시 시도해주세요.'); return; }
+      setCurrentUser(null); setRecoveryOwner('');
+      try { window.sessionStorage?.removeItem('stage-diary-recovery-owner'); } catch {}
+    }
+    setAccountView('none'); setAccountNotice(''); setAuthMode('login'); setNewPassword(''); setConfirmPassword('');
+  };
+
+  const withdrawAccount = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (busy.current || !deleteAccountReady || !currentUser || currentUser.id === 'demo-user' || !deleteAccountAgreed || deleteAccountText !== '탈퇴') return;
+    busy.current = true; setWorking(true); setAccountNotice('');
+    const owner = currentUser.id;
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-stage-diary-account', { body: { confirmation: 'DELETE_MY_ACCOUNT' } });
+      if (error) {
+        let code = '';
+        try { code = (await error.context?.json())?.error || ''; } catch {}
+        if (code === 'RECENT_LOGIN_REQUIRED') { setAccountNotice('본인 확인을 위해 로그아웃 후 다시 로그인하고 15분 안에 탈퇴를 진행해주세요.'); return; }
+        throw error;
+      }
+      if (!data?.deleted) throw new Error('deletion not completed');
+      try { localStorage.removeItem(`stage-diary-preferences:${owner}`); window.sessionStorage?.removeItem('stage-diary-recovery-owner'); } catch {}
+      await supabase.auth.signOut({ scope: 'local' });
+      setCurrentUser(null); setTickets([]); setViewMode('main'); setDetailTicket(null); setCurrentTab('home');
+      setNicknameDraft(null); setNicknameNotice(null); setRecoveryOwner(''); setDeleteAccountReady(false);
+      setDeleteAccountAgreed(false); setDeleteAccountText(''); setAuthPassword(''); setAccountView('none');
+      setAccountNotice('회원 탈퇴가 완료되었습니다. 이용해 주셔서 감사합니다.');
+    } catch { setAccountNotice('회원 탈퇴를 완료하지 못했습니다. 다시 로그인한 후 시도해주세요.'); }
+    finally { busy.current = false; setWorking(false); }
+  };
+
   const handleAuthSubmit = async () => {
     if (busy.current) return;
     if (!authEmail || !authPassword) {
@@ -427,6 +533,41 @@ export default function StageDiaryApp() {
 
   if (!authReady) return <div className="min-h-screen bg-slate-950 text-slate-300 grid place-items-center">로그인 상태 확인 중…</div>;
 
+  if (accountView !== 'none') return <div data-theme={isLight ? 'light' : 'dark'} className={`diary-screen flex items-center justify-center p-0 sm:p-4 ${isLight ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-slate-100'}`}>
+    <section className={`diary-shell account-help w-full max-w-md p-6 sm:rounded-3xl space-y-5 ${isLight ? 'bg-white' : 'bg-slate-900'}`}>
+      <h1 className="text-xl font-bold text-purple-400">{accountView === 'withdraw' ? 'Stage Diary 회원 탈퇴' : accountView === 'email-help' ? '아이디(이메일) 찾기 안내' : accountView === 'new-password' ? '새 비밀번호 설정' : accountView === 'password-updated' ? '비밀번호 변경 완료' : '비밀번호 재설정'}</h1>
+      {accountView === 'withdraw' && <form onSubmit={withdrawAccount} className="space-y-4 text-sm">
+        <p>탈퇴하면 Stage Diary 계정, 닉네임, 관람 기록과 첨부 사진이 삭제되며 복구할 수 없습니다. 필요한 기록은 먼저 보관해주세요.</p>
+        <p>카카오 계정 자체는 삭제되지 않습니다. 카카오의 서비스 연결 내역은 카카오계정 설정에서 관리할 수 있습니다.</p>
+        <label className="flex gap-2 items-start"><input type="checkbox" checked={deleteAccountAgreed} disabled={working} onChange={e => setDeleteAccountAgreed(e.target.checked)} className="mt-1 accent-purple-600" />삭제 내용을 확인했으며 회원 탈퇴에 동의합니다.</label>
+        <label htmlFor="withdrawConfirmation" className="block">확인을 위해 ‘탈퇴’를 입력해주세요.</label>
+        <input id="withdrawConfirmation" value={deleteAccountText} disabled={working} onChange={e => setDeleteAccountText(e.target.value)} autoComplete="off" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3" />
+        <button type="submit" disabled={working || !deleteAccountAgreed || deleteAccountText !== '탈퇴'} className="w-full rounded-xl bg-rose-600 text-white py-3 font-semibold">{working ? '탈퇴 처리 중…' : '회원 탈퇴 확정'}</button>
+      </form>}
+      {accountView === 'email-help' && <div className="space-y-4 text-sm leading-relaxed">
+        <p>Stage Diary의 이메일 로그인 아이디는 가입할 때 입력한 이메일 주소입니다.</p>
+        <p>메일함에서 Stage Diary 가입·인증 메일을 검색하거나 브라우저의 저장된 로그인 정보를 확인해주세요.</p>
+        <p>카카오로 가입했다면 로그인 화면의 ‘카카오로 계속’을 이용해주세요.</p>
+        <p className="text-slate-400 text-xs">닉네임이나 이름만으로 다른 사람의 가입 이메일을 조회하는 기능은 제공하지 않습니다.</p>
+      </div>}
+      {accountView === 'reset-request' && <form onSubmit={requestPasswordReset} className="space-y-4">
+        <p className="text-sm text-slate-400">가입한 이메일로 비밀번호 재설정 링크를 보내드립니다. 카카오로 가입한 경우 ‘카카오로 계속’을 이용해주세요.</p>
+        <label htmlFor="resetEmail" className="block text-sm">가입 이메일</label>
+        <input id="resetEmail" type="email" autoComplete="email" required value={resetEmail} disabled={working} onChange={e => { setResetEmail(e.target.value); setResetSent(false); setAccountNotice(''); }} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm" />
+        <button disabled={working || resetSent} type="submit" className="w-full bg-purple-600 text-white rounded-xl py-3 text-sm font-semibold">{working ? '발송 중…' : resetSent ? '재설정 메일 발송 요청 완료' : '재설정 메일 보내기'}</button>
+      </form>}
+      {accountView === 'new-password' && <form onSubmit={updateRecoveredPassword} className="space-y-3">
+        <label htmlFor="newPassword" className="block text-sm">새 비밀번호 (8자 이상)</label>
+        <input id="newPassword" type="password" autoComplete="new-password" minLength={8} maxLength={72} required disabled={working} value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3" />
+        <label htmlFor="confirmPassword" className="block text-sm">새 비밀번호 확인</label>
+        <input id="confirmPassword" type="password" autoComplete="new-password" minLength={8} maxLength={72} required disabled={working} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3" />
+        <button disabled={working || !recoveryOwner} type="submit" className="w-full bg-purple-600 text-white rounded-xl py-3 font-semibold">{working ? '변경 중…' : '비밀번호 변경'}</button>
+      </form>}
+      {accountNotice && <p role="status" className="text-sm text-purple-400">{accountNotice}</p>}
+      <button disabled={working} onClick={closeAccountHelp} className="text-sm text-purple-400 underline">{accountView === 'withdraw' ? '취소하고 마이페이지로 돌아가기' : '로그인 화면으로 돌아가기'}</button>
+    </section>
+  </div>;
+
   // 로그인 화면 렌더링
   if (!currentUser) {
     return (
@@ -439,6 +580,7 @@ export default function StageDiaryApp() {
           <div className="space-y-4">
             {renderSharedEvent()}
             {loadError && <p role="alert" className="text-xs text-rose-400">{loadError}</p>}
+            {accountNotice && <p role="status" className="text-xs text-purple-400">{accountNotice}</p>}
             {kakaoEnabled && <div className="space-y-2">
               <button disabled={working} onClick={handleKakaoLogin} className="w-full rounded-xl bg-[#FEE500] text-[#191919] font-semibold py-3 text-sm flex items-center justify-center gap-2">
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5"><path d="M12 3C6.48 3 2 6.58 2 11c0 2.8 1.8 5.27 4.52 6.7l-1.15 4.1 4.73-2.93c.62.09 1.25.13 1.9.13 5.52 0 10-3.58 10-8s-4.48-8-10-8Z" /></svg>
@@ -458,6 +600,10 @@ export default function StageDiaryApp() {
             <button disabled={working} onClick={handleAuthSubmit} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-semibold py-3 rounded-xl text-sm shadow-lg transition">
               {working ? '처리 중…' : authMode === 'login' ? '로그인' : '회원가입'}
             </button>
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-slate-400">
+              <button disabled={working} onClick={() => { setAccountView('email-help'); setAccountNotice(''); }}>아이디(이메일) 찾기</button>
+              <button disabled={working} onClick={() => { setAccountView('reset-request'); setResetEmail(authEmail); setResetSent(false); setAccountNotice(''); }}>비밀번호 찾기</button>
+            </div>
             <div className="flex justify-between items-center text-xs pt-2">
               <span className="text-slate-400">{authMode === 'login' ? '계정이 없으신가요?' : '이미 계정이 있으신가요?'}</span>
               <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-purple-400 font-semibold hover:underline">
@@ -845,6 +991,7 @@ export default function StageDiaryApp() {
               <div className="rounded-2xl border border-slate-700 overflow-hidden divide-y divide-slate-700">
                 {([['favorites_settings','♡','최애 설정'],['keywords_settings','⚡','인터미션 키워드 관리'],['theme_settings','◐','앱 테마 설정'],['sns_settings','↗','SNS 연동 관리']] as const).map(([tab, icon, label]) => <button key={tab} aria-label={label} onClick={() => setCurrentTab(tab)} className="w-full flex items-center justify-between gap-3 px-4 py-5 text-left hover:bg-purple-500/10"><span className="flex items-center gap-3 text-sm font-medium"><span className="text-purple-400 text-lg" aria-hidden="true">{icon}</span>{label}</span><span className="text-slate-400" aria-hidden="true">›</span></button>)}
               </div>
+              {deleteAccountReady && <button onClick={() => { setDeleteAccountAgreed(false); setDeleteAccountText(''); setAccountNotice(''); setAccountView('withdraw'); }} className="text-xs text-rose-400 underline">회원 탈퇴</button>}
               <div className="flex justify-between text-xs text-slate-400 px-1"><span>버전 정보</span><span>Stage Diary v1.4.0</span></div>
             </div>
           )}
