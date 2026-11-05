@@ -9,7 +9,7 @@ const source = ts.transpileModule(fs.readFileSync('app/page.tsx', 'utf8'), {
   compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
 }).outputText;
 
-async function setup({ authenticated = true, rows = [], failure = '', rejectLoad = false, storage = new Map() } = {}) {
+async function setup({ authenticated = true, kakaoEnabled = false, rows = [], failure = '', rejectLoad = false, storage = new Map() } = {}) {
   const state = [], deps = [], refs = [], pending = [], calls = [], fields = {};
   let cursor = 0, effectCursor = 0, refCursor = 0, tree, fail = failure;
   const user = { id: 'test-user', email: 'test@example.invalid' };
@@ -22,6 +22,7 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
     auth: {
       onAuthStateChange() { return { data: { subscription: { unsubscribe() {} } } }; },
       async getSession() { return { data: { session: authenticated ? { user } : null }, error: null }; },
+      async signInWithOAuth(options) { calls.push({ action: 'oauth', ...options }); return { error: fail ? { message: fail } : null }; },
       async updateUser({ data }) {
         calls.push({ action: 'updateUser', data });
         if (fail) return { data: { user: null }, error: { message: fail } };
@@ -51,8 +52,9 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   const module = { exports: {} };
   const context = {
     exports: module.exports, module,
-    require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
-    window: { innerHeight: 760, addEventListener() {}, removeEventListener() {}, location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
+    require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db, getKakaoLoginEnabled: async () => kakaoEnabled }; return require(name); },
+    AbortController, URLSearchParams, setTimeout() { return 0; }, clearTimeout() {},
+    window: { innerHeight: 760, addEventListener() {}, removeEventListener() {}, location: { href: 'https://example.invalid/', origin: 'https://example.invalid' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
     localStorage: { getItem(key) { return storage.get(key) ?? null; }, setItem(key,value) { storage.set(key,value); } },
     URL: class extends URL { static createObjectURL() { return 'blob:test'; } static revokeObjectURL() {} },
     Image: class { naturalWidth = 2400; naturalHeight = 3600; async decode() {} },
@@ -68,6 +70,20 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   await flush();
   return { render, flush, button, nodes, text: () => text(tree), calls, fields, storage, setFailure(value) { fail = value; } };
 }
+
+test('Kakao sign-in only appears when enabled, works in both auth modes and recovers from errors', async () => {
+  const disabled = await setup({ authenticated: false });
+  assert.ok(!disabled.text().includes('카카오로 계속'));
+  const h = await setup({ authenticated: false, kakaoEnabled: true });
+  assert.ok(h.text().includes('카카오로 계속')); assert.ok(!h.text().includes('구글로 계속'));
+  h.button('회원가입하기').props.onClick(); h.render();
+  await h.button('카카오로 계속').props.onClick(); h.render();
+  const oauth = h.calls.find(c => c.action === 'oauth');
+  assert.equal(oauth.provider, 'kakao'); assert.equal(oauth.options.redirectTo, 'https://example.invalid/');
+  h.setFailure('unavailable'); await h.button('카카오로 계속').props.onClick(); h.render();
+  assert.match(h.text(), /카카오 로그인에 연결하지 못했습니다/);
+  assert.equal(h.button('카카오로 계속').props.disabled, false);
+});
 
 test('nickname saves to account, updates greeting, validates and retains failed draft', async () => {
   const h = await setup();

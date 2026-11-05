@@ -45,7 +45,8 @@ async function setup({ authenticated = true, rows = [], failure = '', rejectLoad
   const module = { exports: {} };
   const context = {
     exports: module.exports, module,
-    require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db }; return require(name); },
+    require(name) { if (name === '@/lib/calendar') return require('./load-calendar.cjs'); if (name === 'react') return { ...require('react'), ...hooks }; if (name === '@/lib/supabase') return { supabase: db, getKakaoLoginEnabled: async () => false }; return require(name); },
+    AbortController, URLSearchParams, setTimeout() { return 0; }, clearTimeout() {},
     URL, window: { innerHeight: 760, addEventListener() {}, removeEventListener() {}, location: { href: 'https://example.invalid/' }, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
     localStorage: { getItem() { return null; }, setItem() {} },
     document: { documentElement: { style: { setProperty() {}, removeProperty() {} } }, getElementById: id => fields[id] || { value: '' } },

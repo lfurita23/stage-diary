@@ -5,6 +5,7 @@
 - 기존 프로젝트의 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`가 필요하다. 비밀 키는 프런트엔드에 넣지 않는다.
 - 양도 티켓을 저장하기 전에 `supabase/migrations/202611020001_transfer_ticket.sql`을 Supabase SQL Editor에서 한 번 실행한다. 기존 tickets RLS가 각 사용자의 `user_id = auth.uid()`에만 조회·추가·수정·삭제를 허용하는지 확인한다. 캡처는 기존 포스터와 같은 방식으로 압축한 JPEG 데이터를 계정 티켓에 저장한다.
 - 구글과 카카오: 각 개발자 콘솔에 앱을 만들고, Supabase Authentication > Providers에서 해당 공급자를 활성화한 뒤 Client ID/Secret을 입력한다. 공급자 콘솔의 콜백은 Supabase에 표시되는 콜백 URL을 사용한다. Supabase URL Configuration에는 실제 서비스 주소와 로컬 개발 주소를 Redirect URLs로 허용한다. 로그인 및 신규 가입은 같은 소셜 로그인 버튼으로 진행된다.
+- 현재 앱은 카카오 연결을 제공한다. 공개 Auth 설정에서 카카오가 활성화된 경우에만 버튼을 표시하고, 설정 조회 실패 시에는 이메일 로그인을 제공한다. 구글·네이버 버튼은 아직 표시하지 않는다. 카카오 인증 취소·연결 실패 시 로그인 화면에서 다시 시도할 수 있다.
 - 네이버: 기본 Supabase 공급자 목록에 없으므로 구글·카카오와 같은 이름만 추가해서는 동작하지 않는다. Custom OAuth 또는 인증 중계 연동이 필요하다. 네이버 프로필은 `response` 내부에 회원 정보가 있으므로 Supabase의 사용자 정보 매핑 호환성을 실제 프로젝트에서 검증해야 한다. 아직 네이버 로그인 버튼과 서버 연결은 제공하지 않는다. 설정되지 않은 기능을 동작하는 것으로 표시하지 않는다.
 
 공식 자료: [Google](https://supabase.com/docs/guides/auth/social-sign-in/auth-google), [Kakao](https://supabase.com/docs/guides/auth/social-sign-in/auth-kakao), [Custom OAuth](https://supabase.com/docs/guides/auth/custom-oauth-providers), [네이버 API](https://developers.naver.com/docs/login/api/api.md).

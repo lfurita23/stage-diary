@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, getKakaoLoginEnabled } from '@/lib/supabase';
 import { calendarFile, parseSharedEvent, type SharedEvent } from '@/lib/calendar';
 
 // 공연장별 가까운 지하철역 매핑
@@ -27,6 +27,15 @@ export default function StageDiaryApp() {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [kakaoEnabled, setKakaoEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    void getKakaoLoginEnabled(controller.signal).then(enabled => { if (active) setKakaoEnabled(enabled); });
+    return () => { active = false; clearTimeout(timeout); controller.abort(); };
+  }, []);
   
   const [currentTab, setCurrentTab] = useState<'home' | 'ticketbook' | 'calendar' | 'mypage' | 'stats' | 'sns_settings' | 'favorites_settings' | 'keywords_settings' | 'theme_settings'>('home');
   const [viewMode, setViewMode] = useState<any>('main');
@@ -45,6 +54,10 @@ export default function StageDiaryApp() {
 
   useEffect(() => {
     const raw = new URL(window.location.href).searchParams.get('event');
+    const callback = new URL(window.location.href);
+    if (callback.searchParams.has('error') || new URLSearchParams(window.location.hash?.slice(1) || '').has('error')) {
+      setLoadError('카카오 로그인을 완료하지 못했습니다. 다시 시도하거나 이메일로 로그인해주세요.');
+    }
     if (raw) {
       const event = parseSharedEvent(raw);
       setSharedEvent(event);
@@ -275,6 +288,19 @@ export default function StageDiaryApp() {
     </section>}
     {shareNotice && <p role="status" className="px-4 py-2 text-sm text-purple-400">{shareNotice}</p>}
   </>;
+  const handleKakaoLogin = async () => {
+    if (busy.current || !kakaoEnabled) return;
+    busy.current = true; setWorking(true); setLoadError('');
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'kakao', options: { redirectTo: `${window.location.origin}/` },
+      });
+      if (error) throw error;
+    } catch {
+      setLoadError('카카오 로그인에 연결하지 못했습니다. 잠시 후 다시 시도하거나 이메일로 로그인해주세요.');
+    } finally { busy.current = false; setWorking(false); }
+  };
+
   const handleAuthSubmit = async () => {
     if (busy.current) return;
     if (!authEmail || !authPassword) {
@@ -413,6 +439,14 @@ export default function StageDiaryApp() {
           <div className="space-y-4">
             {renderSharedEvent()}
             {loadError && <p role="alert" className="text-xs text-rose-400">{loadError}</p>}
+            {kakaoEnabled && <div className="space-y-2">
+              <button disabled={working} onClick={handleKakaoLogin} className="w-full rounded-xl bg-[#FEE500] text-[#191919] font-semibold py-3 text-sm flex items-center justify-center gap-2">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5"><path d="M12 3C6.48 3 2 6.58 2 11c0 2.8 1.8 5.27 4.52 6.7l-1.15 4.1 4.73-2.93c.62.09 1.25.13 1.9.13 5.52 0 10-3.58 10-8s-4.48-8-10-8Z" /></svg>
+                카카오로 계속
+              </button>
+              <p className="text-center text-xs text-slate-400">처음 이용하면 카카오 계정으로 가입됩니다.</p>
+              <p className="text-center text-xs text-slate-400 py-1">또는 이메일로 계속</p>
+            </div>}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">이메일 계정</label>
               <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="example@email.com" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-100" />
