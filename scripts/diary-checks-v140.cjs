@@ -132,10 +132,16 @@ test('Kakao sign-in only appears when enabled, works in both auth modes and reco
   assert.ok(!disabled.text().includes('카카오로 계속'));
   const h = await setup({ authenticated: false, kakaoEnabled: true });
   assert.ok(h.text().includes('카카오로 계속')); assert.ok(!h.text().includes('구글로 계속'));
+  await h.button('카카오로 계속').props.onClick(); h.render();
   h.button('회원가입하기').props.onClick(); h.render();
   await h.button('카카오로 계속').props.onClick(); h.render();
-  const oauth = h.calls.find(c => c.action === 'oauth');
-  assert.equal(oauth.provider, 'kakao'); assert.equal(oauth.options.redirectTo, 'https://example.invalid/');
+  const requests = h.calls.filter(c => c.action === 'oauth');
+  assert.equal(requests.length, 2);
+  for (const oauth of requests) {
+    assert.equal(oauth.provider, 'kakao'); assert.equal(oauth.options.redirectTo, 'https://example.invalid/');
+    assert.equal(oauth.options.queryParams.scope, 'account_email profile_nickname');
+    assert.ok(!oauth.options.queryParams.scope.split(' ').includes('profile_image'));
+  }
   h.setFailure('unavailable'); await h.button('카카오로 계속').props.onClick(); h.render();
   assert.match(h.text(), /카카오 로그인에 연결하지 못했습니다/);
   assert.equal(h.button('카카오로 계속').props.disabled, false);

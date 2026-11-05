@@ -327,7 +327,11 @@ export default function StageDiaryApp() {
     busy.current = true; setWorking(true); setLoadError('');
     try {
       const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'kakao', options: { redirectTo: `${window.location.origin}/` },
+        provider: 'kakao', options: {
+          redirectTo: `${window.location.origin}/`,
+          // `scopes` appends to Kakao's defaults; `scope` overrides the consent list.
+          queryParams: { scope: 'account_email profile_nickname' },
+        },
       });
       if (error) throw error;
     } catch {
