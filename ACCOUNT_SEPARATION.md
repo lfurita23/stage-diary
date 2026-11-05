@@ -2,6 +2,17 @@
 
 확인일: 2026-11-05
 
+## 운영 전환 결과 (2026-11-05)
+
+- Story Seed GitHub Pages 전환 커밋 `2023b70`, Actions `42012007741` 성공. 실제 운영 JS에서 utvoealamrtiuutdtvlb URL 및 프로젝트별 세션 키를 확인했고, 기존 qtr URL은 없었다. Stage Diary 운영 JS는 qtr URL을 유지한다. 검증 결과: output/verification/live-auth-separation.json.
+- 사용자가 Story Seed Gmail SMTP를 저장했으며 새 전용 계정 가입 → 인증 메일 수신 → 로그인 성공을 직접 확인했다. 기존 원고와 티켓, 기존 공용 계정은 삭제/이전하지 않았다.
+- Stage Diary Gmail SMTP도 사용자가 저장했다. Site URL은 Stage Diary 운영 주소로 변경했다. 기존 리디렉션 허용 항목은 보존했다.
+- Stage Diary 삭제 함수를 qtr 프로젝트에 활성화 배포했다 (version 1). 함수 내부에서 Auth getUser로 토큰을 검증하므로 게이트웨이 verify_jwt는 false다. 프로젝트 URL 제한, 최근 로그인, 확인 문구, 세션 취소 후 본인 계정만 삭제 조건을 유지한다.
+- 운영 서버의 미로그인 GET/POST, 위조 토큰은 401, 다른 Origin은 403, PUT은 405, 허용 Origin OPTIONS는 204로 확인했다. 실제 계정 삭제는 수행하지 않았다.
+- Stage Diary UI 배포를 진행한다. 로컬 build는 오래된 캐시를 보관한 뒤 정상 통과했다. 기존 테스트 27개 및 TypeScript 검사는 통과 상태다. 실제 비밀번호 재설정 메일 수신/새 비밀번호 변경은 사용자가 확인해야 한다.
+
+아래는 준비 과정 당시 기록이다. 현재 상태는 위 운영 전환 결과를 우선한다.
+
 ## 2026-11-05 연결 권한 추가 후 진행
 
 - 첫 번째 Codex Supabase 연결을 novel-team으로 재연결한 뒤 utvoealamrtiuutdtvlb 접근이 성공했다. 현재 도구는 소설 프로젝트만 보여 주므로 티켓 프로젝트 서버 배포 시 연결을 다시 전환해야 할 수 있다.

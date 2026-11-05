@@ -7,8 +7,9 @@ const adminKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const publicClient = createClient(url, publicKey, { auth: { persistSession: false, autoRefreshToken: false } });
 const admin = createClient(url, adminKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-// Enable only after the Story Seed website is verified to use its own project.
-const enabled = false;
+// Story Seed production assets use utvoealamrtiuutdtvlb (verified 2026-11-05).
+// This endpoint remains restricted to the dedicated Stage Diary project below.
+const enabled = true;
 Deno.serve(createDeleteAccountHandler({
   enabled,
   projectMatches: url === 'https://qtrzbmmxjkgdbsxqsywr.supabase.co',
